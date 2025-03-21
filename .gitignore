@@ -1,0 +1,7 @@
+data/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
