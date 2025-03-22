@@ -5,3 +5,10 @@ data/
 *.pyw
 *.pyz
 *.pywz
+results/
+*.log
+*.log.*
+*.log.*.*
+*.log.*.*.*
+*.log.*.*.*.*
+*.log.*.*.*.*.*
