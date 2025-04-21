@@ -335,12 +335,12 @@ import numpy as np
 
 class KaggleImageNetDataset(Dataset):
     def __init__(self, root_dir, split='train', transform=None):
-        """
+        '''
         Args:
             root_dir (string): Directory with the ImageNet data (should contain ILSVRC folder)
             split (string): 'train' or 'val'
             transform (callable, optional): Optional transform to be applied on a sample
-        """
+        '''
         self.root_dir = root_dir
         self.transform = transform
         self.split = split
