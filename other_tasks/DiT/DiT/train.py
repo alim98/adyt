@@ -178,8 +178,9 @@ def main(args):
             dataset_config = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(dataset_config)
             
-            # Get the dataloader from the config
-            loader = dataset_config.get_dataset(args.global_batch_size)
+            # Get the dataloader from the config, passing the data_path
+            logger.info(f"Using data path: {args.data_path}")
+            loader = dataset_config.get_dataset(args.global_batch_size, root=args.data_path)
             dataset_size = len(loader.dataset)
             logger.info(f"Dataset from dataset_config contains {dataset_size:,} images")
         except Exception as e:
@@ -238,10 +239,20 @@ def main(args):
         if not args.use_torch_datasets and sampler is not None:
             sampler.set_epoch(epoch)
         logger.info(f"Beginning epoch {epoch}...")
-        for x, y in loader:
+        
+        # Handle both cases: when loader returns (x, y) and when it returns just x
+        for batch in loader:
             # Only continue training for the specified number of steps
             if args.max_steps is not None and train_steps >= args.max_steps:
                 break
+            
+            # Handling for both tuple returns (image, label) and single tensor returns
+            if isinstance(batch, (list, tuple)) and len(batch) == 2:
+                x, y = batch
+            else:
+                x = batch
+                # Create dummy labels, not used in unconditional generation
+                y = torch.zeros(x.shape[0], dtype=torch.long, device=device)
                 
             x = x.to(device)
             y = y.to(device)
@@ -259,7 +270,12 @@ def main(args):
                 z = encoder_posterior.sample() * 0.18215
             
             # Compute loss
-            loss = diffusion.training_losses(model if args.no_distributed else model.module, z, t, y)["loss"].mean()
+            loss = diffusion.training_losses(
+                model if args.no_distributed else model.module, 
+                z, 
+                t, 
+                model_kwargs={"y": y}
+            )["loss"].mean()
             
             # Optimization step
             opt.zero_grad()

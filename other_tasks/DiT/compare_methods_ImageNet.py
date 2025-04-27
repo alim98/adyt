@@ -16,93 +16,7 @@ import subprocess
 import signal
 from PIL import Image
 from torchvision.utils import make_grid, save_image
-import torchvision.transforms as transforms
-from torch.utils.data import Dataset, DataLoader, Subset
-
-# Custom ImageNet dataset class for Kaggle-downloaded data
-class KaggleImageNetDataset(Dataset):
-    def __init__(self, root_dir, split='train', transform=None):
-        """
-        Args:
-            root_dir (string): Directory with the ImageNet data (should contain ILSVRC folder)
-            split (string): 'train' or 'val'
-            transform (callable, optional): Optional transform to be applied on a sample
-        """
-        self.root_dir = root_dir
-        self.transform = transform
-        self.split = split
-        
-        # Different directory structure for train and validation
-        if split == 'train':
-            # Training images are in ILSVRC/Data/CLS-LOC/train/{synset_id}/{image_filename}
-            self.data_path = os.path.join(self.root_dir, 'ILSVRC', 'Data', 'CLS-LOC', 'train')
-            # Get all synset folders
-            self.synsets = [d for d in os.listdir(self.data_path) if os.path.isdir(os.path.join(self.data_path, d))]
-            
-            # Create a list of all image paths
-            self.image_paths = []
-            for synset in self.synsets:
-                synset_path = os.path.join(self.data_path, synset)
-                for img_name in os.listdir(synset_path):
-                    if img_name.lower().endswith(('.jpeg', '.jpg', '.png')):
-                        self.image_paths.append(os.path.join(synset_path, img_name))
-        else:
-            # Validation images are in ILSVRC/Data/CLS-LOC/val
-            self.data_path = os.path.join(self.root_dir, 'ILSVRC', 'Data', 'CLS-LOC', 'val')
-            self.image_paths = [os.path.join(self.data_path, f) for f in os.listdir(self.data_path) 
-                               if f.lower().endswith(('.jpeg', '.jpg', '.png'))]
-        
-        print(f"Found {len(self.image_paths)} images for {split} split")
-
-    def __len__(self):
-        return len(self.image_paths)
-
-    def __getitem__(self, idx):
-        img_path = self.image_paths[idx]
-        
-        # Open image
-        try:
-            image = Image.open(img_path).convert('RGB')
-            
-            if self.transform:
-                image = self.transform(image)
-                
-            # Since DiT only needs images without labels, we return 0 as a dummy label
-            return image, 0
-        except Exception as e:
-            print(f"Error loading image {img_path}: {e}")
-            # Return a blank image in case of error
-            blank = torch.zeros(3, 256, 256) if self.transform else Image.new('RGB', (256, 256), (0, 0, 0))
-            return blank, 0
-
-# Function to create ImageNet data loader
-def create_imagenet_dataloader(root_dir, batch_size, subset_size=None):
-    """Creates a DataLoader for ImageNet dataset downloaded from Kaggle"""
-    transform = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(256),
-        transforms.ToTensor(),
-    ])
-    
-    # Create dataset
-    dataset = KaggleImageNetDataset(root_dir=root_dir, split='train', transform=transform)
-    
-    # Use subset if requested
-    if subset_size and subset_size < len(dataset):
-        indices = np.random.choice(len(dataset), subset_size, replace=False)
-        dataset = Subset(dataset, indices)
-    
-    # Create dataloader
-    dataloader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=8,
-        pin_memory=True,
-        drop_last=True
-    )
-    
-    return dataloader
+import cv2
 
 # Function to run a command and capture its output
 def run_command(cmd, cwd=None):
@@ -309,135 +223,30 @@ def collect_samples(model_dir, samples_dir, num_samples=4):
         print(f"Error generating samples: {e}")
         return False
 
-# Function to create a PyTorch dataset config file for ImageNet
-def create_imagenet_dataset_config(dit_dir, kaggle_imagenet_dir, use_subset=False, subset_size=50000):
-    """Creates a dataset config file to use Kaggle ImageNet dataset"""
-    # Make sure the directory exists
-    dit_dir = os.path.abspath(dit_dir)
-    if not os.path.isdir(dit_dir):
-        raise FileNotFoundError(f"DiT directory not found at: {dit_dir}")
-    
-    # Create the full path for the config file
-    config_path = os.path.join(dit_dir, "dataset_config.py")
-    
-    # Ensure parent directory exists
-    os.makedirs(os.path.dirname(config_path), exist_ok=True)
-    
-    # Create the dataset module file
-    with open(config_path, 'w') as f:
-        f.write(f"""
-import os
-import torch
-import torchvision.transforms as transforms
-from torch.utils.data import Dataset, DataLoader, Subset
-from PIL import Image
-import numpy as np
-
-class KaggleImageNetDataset(Dataset):
-    def __init__(self, root_dir, split='train', transform=None):
-        '''
-        Args:
-            root_dir (string): Directory with the ImageNet data (should contain ILSVRC folder)
-            split (string): 'train' or 'val'
-            transform (callable, optional): Optional transform to be applied on a sample
-        '''
-        self.root_dir = root_dir
-        self.transform = transform
-        self.split = split
-        
-        # Different directory structure for train and validation
-        if split == 'train':
-            # Training images are in ILSVRC/Data/CLS-LOC/train/{{synset_id}}/{{image_filename}}
-            self.data_path = os.path.join(self.root_dir, 'ILSVRC', 'Data', 'CLS-LOC', 'train')
-            # Get all synset folders
-            self.synsets = [d for d in os.listdir(self.data_path) if os.path.isdir(os.path.join(self.data_path, d))]
-            
-            # Create a list of all image paths
-            self.image_paths = []
-            for synset in self.synsets:
-                synset_path = os.path.join(self.data_path, synset)
-                for img_name in os.listdir(synset_path):
-                    if img_name.lower().endswith(('.jpeg', '.jpg', '.png')):
-                        self.image_paths.append(os.path.join(synset_path, img_name))
-        else:
-            # Validation images are in ILSVRC/Data/CLS-LOC/val
-            self.data_path = os.path.join(self.root_dir, 'ILSVRC', 'Data', 'CLS-LOC', 'val')
-            self.image_paths = [os.path.join(self.data_path, f) for f in os.listdir(self.data_path) 
-                              if f.lower().endswith(('.jpeg', '.jpg', '.png'))]
-        
-        print(f"Found {{len(self.image_paths)}} images for {{split}} split")
-
-    def __len__(self):
-        return len(self.image_paths)
-
-    def __getitem__(self, idx):
-        img_path = self.image_paths[idx]
-        
-        # Open image
-        try:
-            image = Image.open(img_path).convert('RGB')
-            
-            if self.transform:
-                image = self.transform(image)
-                
-            # DiT only needs images without labels
-            return image, 0
-        except Exception as e:
-            print(f"Error loading image {{img_path}}: {{e}}")
-            # Return a blank image in case of error
-            blank = torch.zeros(3, 256, 256) if self.transform else Image.new('RGB', (256, 256), (0, 0, 0))
-            return blank, 0
-
-def get_dataset(global_batch_size, root=r"{kaggle_imagenet_dir}"):
-    # Create transformations
-    transform = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(256),
-        transforms.ToTensor()
-    ])
-    
-    # Create dataset
-    dataset = KaggleImageNetDataset(
-        root_dir=root,
-        split='train',
-        transform=transform
-    )
-    
-    # Use a subset if requested
-    if {use_subset}:
-        indices = np.random.choice(len(dataset), min({subset_size}, len(dataset)), replace=False)
-        dataset = Subset(dataset, indices)
-    
-    # Create data loader
-    dataloader = DataLoader(
-        dataset,
-        batch_size=global_batch_size,
-        shuffle=True,
-        num_workers=8,
-        pin_memory=True,
-        drop_last=True
-    )
-    
-    return dataloader
-""")
-    
-    return config_path
-
 # Function to create a command for training
 def create_training_command(method, args, is_windows=False):
     """Creates the appropriate training command based on OS"""
+    # Fix paths for Windows
+    results_dir_fixed = os.path.abspath(method['results_dir']).replace('\\', '/')
+    imagenet_dir_fixed = os.path.abspath(args.imagenet_dir).replace('\\', '/')
+    
+    # Set appropriate num_workers for the platform
+    num_workers = 0 if is_windows else 4
+    
     if is_windows:
         # On Windows, use direct Python execution instead of torchrun
         cmd = (
             f"python train.py "
             f"--model {args.model} "
             f"--lr {args.lr} "
-            f"{args.dataset_arg} "
-            f"--results-dir {method['results_dir']} "
-            f"--global-batch-size {args.batch_size} "  # Use batch_size as global_batch_size directly
-            f"--epochs 1 "  # We'll control training via --max-steps
+            f"--data-path \"{imagenet_dir_fixed}\" "
+            f"--use-torch-datasets "
+            f"--results-dir \"{results_dir_fixed}\" "
+            f"--global-batch-size {args.batch_size} "
+            f"--epochs 1 "
             f"--max-steps {args.steps} "
-            f"--no-distributed "  # Add this flag to disable distributed training
+            f"--no-distributed "
+            f"--num-workers {num_workers} "
             f"{method['args']}"
         )
     else:
@@ -446,11 +255,13 @@ def create_training_command(method, args, is_windows=False):
             f"torchrun --standalone --nproc_per_node={args.num_gpus} train.py "
             f"--model {args.model} "
             f"--lr {args.lr} "
-            f"{args.dataset_arg} "
-            f"--results-dir {method['results_dir']} "
+            f"--data-path \"{imagenet_dir_fixed}\" "
+            f"--use-torch-datasets "
+            f"--results-dir \"{results_dir_fixed}\" "
             f"--global-batch-size {args.batch_size * args.num_gpus} "
-            f"--epochs 1 "  # We'll control training via --max-steps
+            f"--epochs 1 "
             f"--max-steps {args.steps} "
+            f"--num-workers {num_workers} "
             f"{method['args']}"
         )
     
@@ -459,11 +270,8 @@ def create_training_command(method, args, is_windows=False):
 def main():
     parser = argparse.ArgumentParser(description="Train and compare different normalization methods on DiT with ImageNet")
     parser.add_argument("--dit-dir", type=str, default="other_tasks/DiT/DiT", help="Path to DiT repo")
-    parser.add_argument("--imagenet-dir", type=str, default="", help="Path to Kaggle ImageNet dataset (containing ILSVRC folder)")
-    parser.add_argument("--use-torch-datasets", action="store_true", help="Use PyTorch's datasets instead of local files")
-    parser.add_argument("--dataset-download-dir", type=str, default="./datasets", help="Directory to download datasets when using --use-torch-datasets")
-    parser.add_argument("--use-subset", action="store_true", help="Use a smaller subset of the dataset for faster training")
-    parser.add_argument("--subset-size", type=int, default=50000, help="Number of images to use when --use-subset is enabled")
+    parser.add_argument("--imagenet-dir", type=str, default="C:/Users/WINGPU/Desktop/DyT_2/other_tasks/DINO/data", help="Path to ImageNet directory (containing ILSVRC folder)")
+    parser.add_argument("--max-images", type=int, default=5000, help="Maximum number of images to use from dataset")
     parser.add_argument("--results-dir", type=str, default="comparison_results", help="Directory to save results")
     parser.add_argument("--model", type=str, default="DiT-B/4", choices=["DiT-B/4", "DiT-L/4", "DiT-XL/2"], help="DiT model size")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
@@ -485,10 +293,14 @@ def main():
     if is_windows and args.num_gpus > 1:
         print("Warning: Multi-GPU training on Windows is not supported. Setting num_gpus to 1.")
         args.num_gpus = 1
+        
+    # Force windows mode on Windows
+    if is_windows:
+        args.windows_mode = True
     
     # Validate arguments
-    if not args.use_torch_datasets and not args.imagenet_dir:
-        parser.error("--imagenet-dir is required to specify the path to the Kaggle ImageNet dataset")
+    if not args.imagenet_dir:
+        parser.error("--imagenet-dir is required to specify the path to the ImageNet dataset")
     
     # Create results directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -501,7 +313,10 @@ def main():
     
     # Resolve paths
     dit_dir = os.path.abspath(args.dit_dir)
-    download_dir = os.path.abspath(args.dataset_download_dir)
+    imagenet_dir = os.path.abspath(args.imagenet_dir)
+    
+    # Ensure results_dir is absolute
+    results_dir = os.path.abspath(results_dir)
     
     # Check if DiT directory exists
     if not os.path.isdir(dit_dir):
@@ -519,6 +334,206 @@ def main():
             print(f"Could not list directories: {e}")
         sys.exit(1)
     
+    # Check if the ImageNet directory exists
+    if not os.path.isdir(imagenet_dir):
+        print(f"Error: ImageNet directory not found at {imagenet_dir}")
+        sys.exit(1)
+    
+    # Check if ILSVRC directory exists
+    ilsvrc_path = os.path.join(imagenet_dir, "ILSVRC")
+    if not os.path.isdir(ilsvrc_path):
+        print(f"Error: ILSVRC directory not found at {ilsvrc_path}")
+        print("Please ensure your ImageNet directory contains the ILSVRC folder")
+        sys.exit(1)
+        
+    # Copy custom dataset files to DiT directory
+    print("Setting up custom dataset files...")
+    
+    # 1. Copy custom_dataset.py
+    custom_dataset_src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "custom_dataset.py")
+    if not os.path.exists(custom_dataset_src):
+        print("Creating custom dataset module...")
+        with open(custom_dataset_src, 'w') as f:
+            f.write("""import os
+import torch
+import numpy as np
+from PIL import Image
+from torch.utils.data import Dataset, DataLoader
+import torchvision.transforms as transforms
+
+class KaggleImageNetDataset(Dataset):
+    \"\"\"Custom dataset for loading ImageNet data directly from Kaggle's ILSVRC structure\"\"\"
+    
+    def __init__(self, root_dir, split='train', transform=None, max_images=None):
+        \"\"\"
+        Args:
+            root_dir (string): Path to ImageNet directory (containing ILSVRC folder)
+            split (string): 'train' or 'val'
+            transform (callable, optional): Optional transform to be applied on a sample
+            max_images (int, optional): Maximum number of images to use (for testing/debugging)
+        \"\"\"
+        self.root_dir = root_dir
+        self.transform = transform
+        self.split = split
+        self.max_images = max_images
+        self.image_paths = []
+        self.labels = []
+        
+        ilsvrc_path = os.path.join(self.root_dir, "ILSVRC")
+        if not os.path.isdir(ilsvrc_path):
+            raise FileNotFoundError(f"ILSVRC directory not found at {ilsvrc_path}")
+        
+        # Different path structure for training and validation
+        if split == 'train':
+            data_path = os.path.join(ilsvrc_path, "Data", "CLS-LOC", "train")
+            if not os.path.isdir(data_path):
+                raise FileNotFoundError(f"Training data not found at {data_path}")
+            
+            # Get class folders (synsets)
+            synsets = [d for d in os.listdir(data_path) if os.path.isdir(os.path.join(data_path, d))]
+            
+            # Create a mapping from synset to numerical label
+            self.synset_to_label = {synset: i for i, synset in enumerate(synsets)}
+            
+            # Collect images and labels
+            for synset in synsets:
+                synset_path = os.path.join(data_path, synset)
+                image_files = [f for f in os.listdir(synset_path) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.jfif', '.tif', '.tiff', '.bmp'))]
+                
+                # Add images to dataset
+                for img_file in image_files:
+                    self.image_paths.append(os.path.join(synset_path, img_file))
+                    self.labels.append(self.synset_to_label[synset])
+                    
+                    # Check if we've reached the maximum number of images
+                    if self.max_images is not None and len(self.image_paths) >= self.max_images:
+                        break
+                
+                # Check again after processing each synset
+                if self.max_images is not None and len(self.image_paths) >= self.max_images:
+                    break
+        
+        elif split == 'val':
+            data_path = os.path.join(ilsvrc_path, "Data", "CLS-LOC", "val")
+            if not os.path.isdir(data_path):
+                raise FileNotFoundError(f"Validation data not found at {data_path}")
+            
+            # For validation, we need to map images to their labels
+            # This typically requires a label mapping file, but for our purposes
+            # we'll just assign a dummy label (0) to all validation images
+            image_files = [f for f in os.listdir(data_path) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.jfif', '.tif', '.tiff', '.bmp'))]
+            
+            for img_file in image_files:
+                self.image_paths.append(os.path.join(data_path, img_file))
+                self.labels.append(0)  # Dummy label
+                
+                # Check if we've reached the maximum number of images
+                if self.max_images is not None and len(self.image_paths) >= self.max_images:
+                    break
+        
+        print(f"Loaded {len(self.image_paths)} images for {split} split")
+    
+    def __len__(self):
+        return len(self.image_paths)
+    
+    def __getitem__(self, idx):
+        img_path = self.image_paths[idx]
+        label = self.labels[idx]
+        
+        # Load and process the image
+        try:
+            image = Image.open(img_path).convert('RGB')
+            
+            if self.transform:
+                image = self.transform(image)
+            
+            return image, label
+        except Exception as e:
+            print(f"Error loading image {img_path}: {e}")
+            # Return a blank image in case of error
+            blank = torch.zeros(3, 256, 256) if self.transform else Image.new('RGB', (256, 256), (0, 0, 0))
+            return blank, label
+
+def get_dataloader(root_dir, batch_size=32, split='train', max_images=None, num_workers=4):
+    \"\"\"Create a DataLoader for the Kaggle ImageNet dataset\"\"\"
+    
+    # Define image transformations
+    transform = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(256),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True)
+    ])
+    
+    # Create the dataset
+    dataset = KaggleImageNetDataset(
+        root_dir=root_dir,
+        split=split,
+        transform=transform,
+        max_images=max_images
+    )
+    
+    # Create and return the DataLoader
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True
+    )""")
+    
+    # Copy to DiT dir
+    custom_dataset_dst = os.path.join(dit_dir, "custom_dataset.py")
+    shutil.copy2(custom_dataset_src, custom_dataset_dst)
+    
+    # 2. Create dataset_config.py in DiT dir
+    dataset_config_path = os.path.join(dit_dir, "dataset_config.py")
+    with open(dataset_config_path, 'w') as f:
+        f.write(f"""import os
+import sys
+import torch
+from torch.utils.data import DataLoader
+import importlib
+
+# Import the custom dataset
+from custom_dataset import KaggleImageNetDataset, get_dataloader
+
+def get_dataset(global_batch_size, root=r"{imagenet_dir}", max_images={args.max_images}, num_workers={0 if is_windows else 4}):
+
+    # Create transformations - these match DiT's requirements
+    import torchvision.transforms as transforms
+    transform = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(256),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True)
+    ])
+    
+    # Create dataset
+    dataset = KaggleImageNetDataset(
+        root_dir=root,
+        split='train',
+        transform=transform,
+        max_images=max_images
+    )
+    
+    # Create data loader
+    dataloader = DataLoader(
+        dataset,
+        batch_size=global_batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True
+    )
+    
+    return dataloader
+""")
+    
+    print(f"Dataset files set up successfully in {dit_dir}")
+        
     # Set up training for each method
     methods = []
     
@@ -533,182 +548,6 @@ def main():
             "name": "AdaptiveDynamicTanh", 
             "args": f" --use-adyt --lambda-factor {args.adyt_lambda} --smooth-factor {args.adyt_smooth}"
         })
-    
-    # If using PyTorch datasets, create the dataset configuration
-    if args.use_torch_datasets:
-        print("Using PyTorch datasets instead of local files")
-        try:
-            dataset_config = create_imagenet_dataset_config(
-                dit_dir, 
-                download_dir,
-                args.use_subset,
-                args.subset_size
-            )
-            print(f"Created dataset configuration at {dataset_config}")
-            args.dataset_arg = "--use-torch-datasets"
-        except Exception as e:
-            print(f"Error creating dataset configuration: {e}")
-            sys.exit(1)
-    else:
-        # Using Kaggle ImageNet dataset
-        if not args.imagenet_dir:
-            print("Error: You must specify --imagenet-dir when not using --use-torch-datasets")
-            sys.exit(1)
-            
-        # Check if the ImageNet directory exists and has the expected structure
-        imagenet_dir = os.path.abspath(args.imagenet_dir)
-        if not os.path.isdir(os.path.join(imagenet_dir, "ILSVRC")):
-            print(f"Error: Could not find ILSVRC folder in {imagenet_dir}")
-            print("The Kaggle ImageNet dataset should contain the ILSVRC folder at the root level")
-            sys.exit(1)
-            
-        # Create the ImageNet dataset config
-        try:
-            dataset_config = create_imagenet_dataset_config(
-                dit_dir,
-                imagenet_dir,
-                args.use_subset,
-                args.subset_size
-            )
-            print(f"Created ImageNet dataset configuration at {dataset_config}")
-            args.dataset_arg = "--use-torch-datasets"
-        except Exception as e:
-            print(f"Error creating ImageNet dataset configuration: {e}")
-            sys.exit(1)
-
-    # Create a patch to add the no-distributed flag to DiT's train.py
-    if is_windows:
-        no_dist_patch_path = os.path.join(os.path.dirname(__file__), "no-distributed.patch")
-        with open(no_dist_patch_path, 'w') as f:
-            f.write("""From 01dc036d356c11ef0cd298de550e2802f928c5f8 Mon Sep 17 00:00:00 2001
-From: User <user@example.com>
-Date: Mon, 17 Mar 2025 19:42:55 +0000
-Subject: [PATCH] add-no-distributed-option
-
----
- train.py  | 22 +++++++++++++++++++++-
- 1 file changed, 21 insertions(+), 1 deletion(-)
-
-diff --git a/train.py b/train.py
-index 3bc8c87..c9e5a24 100644
---- a/train.py
-+++ b/train.py
-@@ -66,6 +66,7 @@ def main(args):
-     parser.add_argument("--log-frequency", type=int, default=100)
-     parser.add_argument("--ckpt-frequency", type=int, default=50_000)
-+    parser.add_argument("--no-distributed", action="store_true", help="Disable distributed training (for Windows)")
-     args = parser.parse_args()
- 
-     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
-@@ -79,8 +80,17 @@ def main(args):
-     
-     assert os.path.exists(args.data_path), f"Data path {args.data_path} not found!"
- 
--    # Setup processes.
--    dist.init_process_group(backend="nccl" if torch.cuda.is_available() else "gloo")
-+    # Setup processes (unless no-distributed is specified)
-+    if args.no_distributed:
-+        print("Running without distributed training")
-+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-+        rank = 0
-+        world_size = 1
-+        local_rank = 0
-+    else:
-+        # Normal distributed setup
-+        dist.init_process_group(backend="nccl" if torch.cuda.is_available() else "gloo")
-+        rank = dist.get_rank()
-+        world_size = dist.get_world_size()
-+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
-+        device = torch.device(f"cuda:{local_rank}")
-+
--    rank = dist.get_rank()
--    device = torch.device(f"cuda:{rank}")
--- 
-2.34.1""")
-        
-        # Apply the patch
-        try:
-            print("Applying no-distributed patch for Windows compatibility...")
-            run_command(f"git apply {no_dist_patch_path}", cwd=dit_dir)
-        except Exception as e:
-            print(f"Warning: Failed to apply no-distributed patch: {e}")
-            print("You may need to manually add the --no-distributed flag support to train.py")
-
-    # Create a patch to add torch.datasets support to DiT's train.py
-    torch_datasets_patch_path = os.path.join(os.path.dirname(__file__), "torch-datasets.patch")
-    with open(torch_datasets_patch_path, 'w') as f:
-        f.write("""From 01dc036d356c11ef0cd298de550e2802f928c5f8 Mon Sep 17 00:00:00 2001
-From: User <user@example.com>
-Date: Mon, 17 Mar 2025 19:42:55 +0000
-Subject: [PATCH] add-torch-datasets-option
-
----
- train.py  | 15 ++++++++++++++-
- 1 file changed, 14 insertions(+), 1 deletion(-)
-
-diff --git a/train.py b/train.py
-index 3bc8c87..c9e5a24 100644
---- a/train.py
-+++ b/train.py
-@@ -41,6 +41,7 @@ def main(args):
-     parser.add_argument("--global-batch-size", type=int, default=256)
-     parser.add_argument("--global-seed", type=int, default=0)
-     parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")
-+    parser.add_argument("--use-torch-datasets", action="store_true", help="Use PyTorch datasets instead of local files")
-     # Optim params
-     parser.add_argument("--lr", type=float, default=1e-4)
-     parser.add_argument("--warmup", type=int, default=5000)
-@@ -77,7 +78,14 @@ def main(args):
-     # Seeds
-     torch.manual_seed(args.global_seed)
-     
--    assert os.path.exists(args.data_path), f"Data path {args.data_path} not found!"
-+    # Data loading
-+    if args.use_torch_datasets:
-+        # Import the dataset_config module
-+        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-+        from dataset_config import get_dataset
-+        dataset = get_dataset(args.global_batch_size)
-+    else:
-+        assert os.path.exists(args.data_path), f"Data path {args.data_path} not found!"
- 
-     # Setup processes.
-     dist.init_process_group(backend="nccl" if torch.cuda.is_available() else "gloo")
-@@ -144,8 +152,13 @@ def main(args):
-     logging.info(f"Training for {args.epochs} epochs...")
-     logging.info(f"Mixed-precision training: {autocast_enabled}")
- 
--    # Dataset
--    dataset = data.get_dataset(args, global_batch_size=args.global_batch_size, training_images_percentage=args.training_images_percentage)
-+    # Dataset (only load if we're not using torch datasets)
-+    if not args.use_torch_datasets:
-+        dataset = data.get_dataset(args, global_batch_size=args.global_batch_size, training_images_percentage=args.training_images_percentage)
-+        
-+    # Set up dataloader iterator
-+    dataset_iterator = iter(dataset)
-+    
-     logging.info(f"Dataset contains {len(dataset) * args.global_batch_size} images, virtual batch size is {args.global_batch_size}.")
-         
-     # Variables for monitoring/logging purposes
-@@ -179,7 +192,7 @@ def main(args):
-     steps_per_epoch = len(dataset)
-     for epoch in range(start_epoch, args.epochs):
-         logging.info(f"Beginning epoch {epoch}...")
--        for rng_state, x, y, cond in dataset:
-+        for i, batch in enumerate(dataset):
-             # Data
-             x = x.to(device)
-             y = y.to(device)
--- 
-2.34.1""")
-        
-    # Apply the torch datasets patch
-    try:
-        print("Applying torch-datasets patch...")
-        run_command(f"git apply {torch_datasets_patch_path}", cwd=dit_dir)
-    except Exception as e:
-        print(f"Warning: Failed to apply torch-datasets patch: {e}")
-        print("You may need to manually add the --use-torch-datasets flag support to train.py")
 
     # Train each method and collect metrics
     metrics = {}
@@ -718,7 +557,7 @@ index 3bc8c87..c9e5a24 100644
         print(f"{'='*80}")
         
         # Create method-specific directory
-        method_dir = os.path.join(results_dir, method["name"].lower().replace(" ", "_"))
+        method_dir = os.path.abspath(os.path.join(results_dir, method["name"].lower().replace(" ", "_")))
         os.makedirs(method_dir, exist_ok=True)
         method["results_dir"] = method_dir
         
@@ -783,6 +622,13 @@ index 3bc8c87..c9e5a24 100644
     # Final comparison report
     print("\nTraining complete!")
     print(f"All results saved to: {results_dir}")
+    
+    # Clean up temp directory
+    print("Cleaning up temporary dataset directory...")
+    try:
+        shutil.rmtree(temp_data_dir)
+    except Exception as e:
+        print(f"Warning: Failed to clean up temporary directory: {e}")
     
     # If samples were generated, create a grid of samples from all methods
     if args.sample:
