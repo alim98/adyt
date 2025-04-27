@@ -154,4 +154,15 @@ results/*
 datasets/*
 5epochs/*
 other_tasks/DiT/data/*
-*.patch 
+# *.patch 
+other_tasks/DINO/dynamic-tanh-adaptive.patch
+other_tasks/DINO/dynamic-tanh.patch
+other_tasks/DNA/dynamic-tanh.patch
+
+other_tasks/DNA/dynamic-tanh.patch
+other_tasks/DiT/adaptive-dynamic-tanh.patch
+other_tasks/DiT/dataset-patch.patch
+other_tasks/DiT/dynamic-tanh-fix.patch
+other_tasks/DiT/dynamic-tanh.patch
+other_tasks/DiT/learning-rate-fix.patch
+other_tasks/wav2vec2/dynamic-tanh.patch

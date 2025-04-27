@@ -1,0 +1,45 @@
+From 01dc036d356c11ef0cd298de550e2802f928c5f8 Mon Sep 17 00:00:00 2001
+From: User <user@example.com>
+Date: Mon, 17 Mar 2025 19:42:55 +0000
+Subject: [PATCH] add-no-distributed-option
+
+---
+ train.py  | 22 +++++++++++++++++++++-
+ 1 file changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/train.py b/train.py
+index 3bc8c87..c9e5a24 100644
+--- a/train.py
++++ b/train.py
+@@ -66,6 +66,7 @@ def main(args):
+     parser.add_argument("--log-frequency", type=int, default=100)
+     parser.add_argument("--ckpt-frequency", type=int, default=50_000)
++    parser.add_argument("--no-distributed", action="store_true", help="Disable distributed training (for Windows)")
+     args = parser.parse_args()
+ 
+     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
+@@ -79,8 +80,17 @@ def main(args):
+     
+     assert os.path.exists(args.data_path), f"Data path {args.data_path} not found!"
+ 
+-    # Setup processes.
+-    dist.init_process_group(backend="nccl" if torch.cuda.is_available() else "gloo")
++    # Setup processes (unless no-distributed is specified)
++    if args.no_distributed:
++        print("Running without distributed training")
++        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
++        rank = 0
++        world_size = 1
++        local_rank = 0
++    else:
++        # Normal distributed setup
++        dist.init_process_group(backend="nccl" if torch.cuda.is_available() else "gloo")
++        rank = dist.get_rank()
++        world_size = dist.get_world_size()
++        local_rank = int(os.environ.get("LOCAL_RANK", 0))
++        device = torch.device(f"cuda:{local_rank}")
++
+-    rank = dist.get_rank()
+-    device = torch.device(f"cuda:{rank}")
+-- 
+2.34.1

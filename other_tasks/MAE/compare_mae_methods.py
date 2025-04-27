@@ -30,17 +30,20 @@ import timm
 import timm.optim
 
 # Fix path to MAE modules
-base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-mae_dir = os.path.join(base_dir, "other_tasks", "MAE", "mae")
+current_dir = os.path.dirname(os.path.abspath(__file__))
+mae_dir = os.path.join(current_dir, "mae")
 if os.path.exists(mae_dir):
-    sys.path.insert(0, mae_dir)
+    if mae_dir not in sys.path:
+        sys.path.insert(0, mae_dir)
     print(f"Added MAE directory to path: {mae_dir}")
 else:
     print(f"MAE directory not found at: {mae_dir}")
     print("Current directory:", os.getcwd())
-    print("Available directories:", os.listdir(os.path.dirname(os.path.abspath(__file__))))
+    print("Available directories:", os.listdir(current_dir))
+    raise ImportError("MAE directory not found. Please run the script using run_comparison.bat which will clone the repository if needed.")
 
 try:
+    # Import the required modules
     import util.misc as misc
     import util.lr_sched as lr_sched
     from util.misc import NativeScalerWithGradNormCount as NativeScaler
@@ -50,6 +53,14 @@ try:
 except ImportError as e:
     print(f"Error importing MAE modules: {e}")
     print("sys.path:", sys.path)
+    
+    # Print the contents of directories for debugging
+    if os.path.exists(mae_dir):
+        print("Contents of mae directory:", os.listdir(mae_dir))
+        util_dir = os.path.join(mae_dir, "util")
+        if os.path.exists(util_dir):
+            print("Contents of util directory:", os.listdir(util_dir))
+    
     raise
 
 # Import DynamicTanh implementations
