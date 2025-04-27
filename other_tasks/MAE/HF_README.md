@@ -22,7 +22,7 @@ cd mae
 git apply compatibility-fix.patch
 
 
-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
+# NOTE: Token removed for security reasons - never commit access tokens to your repo
 
 pip install huggingface_cli
 huggingface-cli login
